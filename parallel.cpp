@@ -90,12 +90,10 @@ class Graph{
             for(int i=0; i<current_level_nodes.size(); i++){
                 char current_node = current_level_nodes[i];
                 for(char neighbor: adlist[current_node]){
+                    #pragma omp critical
                     if(!visited[neighbor]){
-                        #pragma omp critical
-                        if(!visited[neighbor]){
-                            q.push(neighbor);
-                            visited[neighbor] = true;
-                        }
+                        q.push(neighbor);
+                        visited[neighbor] = true;
                     }
                 }
             }
@@ -150,16 +148,37 @@ class Graph{
 
             #pragma omp parallel for
             for(char n: neighbors){
-               if(!visited[n]){
                 #pragma omp critical
                 if(!visited[n]){
                     s.push(n);
                     visited[n] = true;
                 }  
-               } 
             }
         }
         cout<<endl;
+    }
+
+    void rec_seq_dfs_caller(char start){
+        unordered_map<char, bool> visited;
+        for(auto e: adlist){
+            visited[e.first] = false;
+        }
+
+        visited[start] = true;
+        rec_seq_dfs(start, visited);
+        cout<<endl;
+    }
+
+    // CAUSES SEGMENTATION FAULT!!
+    void rec_seq_dfs(char start, unordered_map<char, bool>& visited){
+        cout << start<<" ";
+        vector<char> neighbors = adlist[start];
+        for(char n: neighbors){
+            if(!visited[n]){
+                rec_seq_dfs(n, visited);
+                visited[n] = true;
+            }
+        }
     }
 
     void run_bfs(char start){
@@ -202,27 +221,28 @@ int main(){
     Graph g(edges);
     g.construct();
     g.display();
-    g.run_bfs('A');
-    g.run_dfs('A');
+    g.run_bfs('C');
+    g.run_dfs('C');
+    // g.rec_seq_dfs_caller('C');
 }
 /*
 Enter number of edges: 5
 Enter only unique edges: A B
-Enter only unique edges: A C
 Enter only unique edges: B C
+Enter only unique edges: A C
+Enter only unique edges: C E
 Enter only unique edges: D C
-Enter only unique edges: E C
-E -> C 
 D -> C 
-C -> A B D E 
+E -> C 
+C -> B A E D 
 B -> A C 
 A -> B C 
-A B C D E 
-Time for seq bfs: 2.1e-05s.
-A B C D E 
-Time for par bfs: 1.2063e-05s.
-A C E D B 
-Time for seq dfs: 1.026e-05s.
-A C E D B 
-Time for par dfs: 1.066e-05s.
+C B A E D 
+Time for seq bfs: 3.778e-05s.
+C B A E D 
+Time for par bfs: 4.5416e-05s.
+C D E A B 
+Time for seq dfs: 1.6811e-05s.
+C D E A B 
+Time for par dfs: 1.4648e-05s.
 */
