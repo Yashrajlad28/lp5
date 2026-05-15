@@ -1,0 +1,617 @@
+HPC:
+
+// Assignment 1
+#include <bits/stdc++.h>
+#include <omp.h>
+#include <ctime>
+#include <cstdlib>
+using namespace std;
+
+class Graph{
+    int V;
+    unordered_map<int, vector<int>> adlist;
+
+    public:
+
+    Graph(int V){
+        this->V = V;
+        this->adlist.clear();
+    }
+
+    void construct(int E){
+        srand(time(0));
+        for(int i=0; i<E; i++){
+            int u = rand() % V;
+            int v = rand() % V;
+
+            if(u != v){
+                adlist[u].push_back(v);
+                adlist[v].push_back(u);
+            }
+        }
+    }
+
+    int get_start_node(){
+        auto itr = adlist.begin(); // this gives an iterator
+        return itr -> first; 
+    }
+
+    void seq_bfs(int start){
+        unordered_map<int, bool> visited;
+        for(auto e: adlist) visited[e.first] = false;
+
+        queue<int> q;
+        visited[start] = true;
+        q.push(start);
+
+        while(!q.empty()){
+            int u = q.front();
+            q.pop();
+
+            for(int n: adlist[u]){
+                if(!visited[n]){
+                    visited[n] = true;
+                    q.push(n);
+                }
+            }
+        }
+    }
+
+    void par_bfs(int start){
+        unordered_map<int, bool> visited;
+        for(auto e: adlist) visited[e.first] = false;
+
+        vector<int> frontier;
+        visited[start] = true;
+        frontier.push_back(start);
+
+        while(!frontier.empty()){
+            vector<int> next_frontier;
+
+            #pragma omp parallel for
+            for(int i=0; i<frontier.size(); i++){
+                int node = frontier[i];
+
+                for(int n: adlist[node]){
+                    if(!visited[n]){
+                        #pragma omp critical
+                        {
+                            if(!visited[n]){
+                                visited[n] = true;
+                                frontier.push_back(n);
+                            }
+                        }
+                    }
+                }
+            }
+            frontier = next_frontier;
+        }
+    }
+
+    void seq_dfs_caller(int start){
+        unordered_map<int, bool> visited;
+        for(auto e: adlist) visited[e.first] = false;
+
+        visited[start] = true;
+        seq_dfs(start, visited);
+    }
+
+    void seq_dfs(int node, unordered_map<int, bool>& visited){
+        for(int n: adlist[node]){
+            if(!visited[n]){
+                visited[n] = true;
+                seq_dfs(n, visited);
+            }
+        }
+    }
+
+    void par_dfs_caller(int start){
+        unordered_map<int, bool> visited;
+        for(auto e: adlist) visited[e.first] = false;
+
+        visited[start] = true;
+        #pragma omp parallel shared(visited)
+        {
+            #pragma omp single
+            par_dfs_task(start, visited);
+        }
+
+    }
+
+    void par_dfs_task(int node, unordered_map<int, bool>& visited){
+        for(int i=0; i<adlist[node].size(); i++){
+            int next = adlist[node][i];
+            bool already_visited = false;
+
+            #pragma omp atomic capture
+            {
+                already_visited = visited[next];
+                visited[next] = true;
+            }
+            if(!already_visited){
+                #pragma omp task shared(visited) firstprivate(next)
+                par_dfs_task(next, visited);
+            }
+
+        }
+        #pragma omp taskwait
+    }
+
+    void run(int start){
+
+        cout<<"Seq BFS: "<<endl;
+        double start_sbfs = omp_get_wtime();
+        seq_bfs(start);
+        double end_sbfs = omp_get_wtime();
+        cout<<"Time Taken: "<<(end_sbfs - start_sbfs)<<"seconds."<<endl<<endl;
+
+        cout<<"Par BFS: "<<endl;
+        double start_pbfs = omp_get_wtime();
+        par_bfs(start);
+        double end_pbfs = omp_get_wtime();
+        cout<<"Time Taken: "<<(end_pbfs - start_pbfs)<<"seconds."<<endl<<endl;
+
+        cout<<"Seq DFS: "<<endl;
+        double start_sdfs = omp_get_wtime();
+        seq_dfs_caller(start);
+        double end_sdfs = omp_get_wtime();
+        cout<<"Time Taken: "<<(end_sdfs - start_sdfs)<<"seconds."<<endl<<endl;
+
+        cout<<"Par DFS: "<<endl;
+        double start_pdfs = omp_get_wtime();
+        par_dfs_caller(start);
+        double end_pdfs = omp_get_wtime();
+        cout<<"Time Taken: "<<(end_pdfs - start_pdfs)<<"seconds."<<endl<<endl;
+
+    }
+};
+
+int main(){
+    const int V = 20000;
+    const int E = 80000;
+
+    Graph g(V);
+
+    g.construct(E);
+    g.run(g.get_start_node());
+}
+
+// Assignment 2
+#include <bits/stdc++.h>
+#include <omp.h>
+#include <ctime>
+#include <cstdlib>
+using namespace std;
+
+vector<int> initialize(int size){
+    vector<int> vec;
+    srand(time(0));
+    for(int i=0; i<size; i++){
+        vec.push_back(rand() % size);
+    }
+    return vec;
+}
+
+void combine(int low, int mid, int high, vector<int>& arr){
+    int left = low;
+    int right = mid+1;
+    vector<int> temp;
+
+    while(left <= mid && right <= high){
+        if(arr[left] <= arr[right]){
+            temp.push_back(arr[left]);
+            left++;
+        }else{
+            temp.push_back(arr[right]);
+            right++;
+        }
+    }
+
+    while(left <= mid){
+        temp.push_back(arr[left]);
+        left++;
+    }
+
+    while(right <= high){
+        temp.push_back(arr[right]);
+        right++;
+    }
+
+    for(int i=low; i<=high; i++){
+        arr[i] = temp[i - low];
+    }
+}
+
+void merge_sort(int low, int high, vector<int>& arr){
+    if(low >= high) return;
+
+    int mid = (low+high)/2;
+
+    merge_sort(low, mid, arr);
+    merge_sort(mid+1, high, arr);
+    combine(low, mid, high, arr);
+}
+
+void merge_sort_task(int low, int high, vector<int>& arr){
+    if(low >= high) return;
+
+    if(high - low + 1 <= 2048){
+        merge_sort(low, high, arr);
+    }
+
+    int mid = low + (high - low) / 2;
+
+    #pragma omp task shared(arr) firstprivate(low, mid)
+    merge_sort_task(low, mid, arr);
+
+    #pragma omp task shared(arr) firstprivate(mid, high)
+    merge_sort_task(mid+1, high, arr);
+
+    #pragma omp taskwait
+    combine(low, mid, high, arr);
+}
+
+void parallel_merge(int low, int high, vector<int>& arr){
+    #pragma omp parallel
+    {
+        #pragma omp single
+        merge_sort_task(low, high, arr);
+    }
+}
+
+
+
+void bubble(vector<int>& arr, int size){
+    for(int i=0; i<size; i++){
+        for(int j=0; j<size - i - 1; j++){
+            if(arr[j] > arr[j+1]) swap(arr[j], arr[j+1]);
+        }
+    }
+}
+
+void parallel_bubble(vector<int>& arr, int size){
+    for(int phases = 0; phases<size; phases++){
+        int start = phases % 2;
+        int pairs = (size - start)/2;
+
+        #pragma omp parallel for schedule(static)
+        for(int p=0; p<pairs; p++){
+            int j = (p*2) + start;
+            if(arr[j] > arr[j+1]) swap(arr[j], arr[j+1]);
+        }
+    }
+}
+
+bool is_array_sorted(vector<int>& arr){
+    for(int i=0; i<arr.size()-1; i++){
+        if(arr[i] > arr[i+1]) return false;
+    }
+    return true;
+}
+
+void run(){
+    cout<<"Sequential Bubble: "<<endl;
+    vector<int> vec1 = initialize(50000);
+    cout<<is_array_sorted(vec1)<<endl;
+    double start_sbs = omp_get_wtime();
+    bubble(vec1, vec1.size());
+    double end_sbs = omp_get_wtime();
+    cout<<is_array_sorted(vec1)<<endl;
+    cout<<"Time taken: "<< (end_sbs - start_sbs)<<"seconds."<<endl<<endl;
+
+    cout<<"Parallel Bubble: "<<endl;
+    vector<int> vec2 = initialize(50000);
+    cout<<is_array_sorted(vec2)<<endl;
+    double start_pbs = omp_get_wtime();
+    parallel_bubble(vec2, vec2.size());
+    double end_pbs = omp_get_wtime();
+    cout<<is_array_sorted(vec2)<<endl;
+    cout<<"Time taken: "<< (end_pbs - start_pbs)<<"seconds."<<endl<<endl;
+
+    cout<<"Sequential Merge: "<<endl;
+    vector<int> vec3 = initialize(200000);
+    cout<<is_array_sorted(vec3)<<endl;
+    double start_sms = omp_get_wtime();
+    merge_sort(0, vec3.size()-1, vec3);
+    double end_sms = omp_get_wtime();
+    cout<<is_array_sorted(vec3)<<endl;
+    cout<<"Time taken: "<< (end_sms - start_sms)<<"seconds."<<endl<<endl;
+
+    cout<<"Parallel Merge: "<<endl;
+    vector<int> vec4 = initialize(200000);
+    cout<<is_array_sorted(vec4)<<endl;
+    double start_pms = omp_get_wtime();
+    parallel_merge(0, vec4.size()-1, vec4);
+    double end_pms = omp_get_wtime();
+    cout<<is_array_sorted(vec4)<<endl;
+    cout<<"Time taken: "<< (end_pms - start_pms)<<"seconds."<<endl<<endl;
+}
+
+int main(){
+    run();
+}
+
+
+// Assignment 3
+#include <bits/stdc++.h>
+#include <omp.h>
+#include <ctime>
+#include <climits>
+using namespace std;
+
+vector<int> initialize(){
+    vector<int> vec;
+    vec.clear();
+    srand(time(0));
+    for(int i=0; i<100000000; i++){
+        int num = rand() % 100000000; // 8 zeros
+        vec.push_back(num);
+    }
+    return vec;
+}
+
+int min_seq(vector<int>& vec){
+    int min = INT_MAX;
+    for(int i=0; i<vec.size(); i++){
+        if(min > vec[i]){
+            min = vec[i];
+        }
+    }
+    return min;
+}
+
+int max_seq(vector<int>& vec){
+    int max = INT_MIN;
+    for(int i=0; i<vec.size(); i++){
+        if(max < vec[i]){
+            max = vec[i];
+        }
+    }
+    return max;
+}
+
+long long sum_seq(vector<int>& vec){
+    long long sum = 0;
+    for(int i=0; i<vec.size(); i++){
+        sum += vec[i];
+    }
+    return sum;
+}
+
+double avg_seq(vector<int>& vec){
+    return double(sum_seq(vec))/vec.size();
+}
+
+int min_par(vector<int>& vec){
+    int min = INT_MAX;
+    #pragma omp parallel for reduction(min:min)
+    for(int i=0; i<vec.size(); i++){
+        if(min > vec[i]){
+            min = vec[i];
+        }
+    }
+    return min;
+}
+
+int max_par(vector<int>& vec){
+    int max = INT_MIN;
+    #pragma omp parallel for reduction(max:max)
+    for(int i=0; i<vec.size(); i++){
+        if(max < vec[i]){
+            max = vec[i];
+        }
+    }
+    return max;
+}
+
+long long sum_par(vector<int>& vec){
+    long long sum = 0;
+    #pragma omp parallel for reduction(+:sum)
+    for(int i=0; i<vec.size(); i++){
+        sum += vec[i];
+    }
+    return sum;
+}
+
+double avg_par(vector<int>& vec){
+    return double(sum_par(vec))/vec.size();
+}
+
+void run(){
+    vector<int> vtr1 = initialize();
+    cout<<"Peforming Sequential..."<<endl;
+
+    double seq_start_time = omp_get_wtime();
+    int smin = min_seq(vtr1);
+    int smax = max_seq(vtr1);
+    long long ssum = sum_seq(vtr1);
+    double savg = avg_seq(vtr1);
+    double seq_end_time = omp_get_wtime();
+
+    cout<<"Min: "<<smin<<endl;
+    cout<<"Max: "<<smax<<endl;
+    cout<<"Sum: "<<ssum<<endl;
+    cout<<"Avg: "<<savg<<endl;
+    cout<<"Time taken: "<<(seq_end_time - seq_start_time)<<"seconds."<<endl<<endl;
+
+    cout<<"Peforming Parallel..."<<endl;
+
+    double par_start_time = omp_get_wtime();
+    int pmin = min_par(vtr1);
+    int pmax = max_par(vtr1);
+    long long psum = sum_par(vtr1);
+    double pavg = avg_par(vtr1);
+    double par_end_time = omp_get_wtime();
+
+    cout<<"Min: "<<pmin<<endl;
+    cout<<"Max: "<<pmax<<endl;
+    cout<<"Sum: "<<psum<<endl;
+    cout<<"Avg: "<<pavg<<endl;
+    cout<<"Time taken: "<<(par_end_time - par_start_time)<<"seconds."<<endl<<endl;
+}
+
+int main(){
+    run();
+}
+
+DL:
+
+Assignment 1
+
+Handle null
+X, y
+train_test_split
+scale X_train and X_test
+
+model = Sequential([
+    Dense(128, input_shape=(13,), activation='relu'),
+    Dense(64, activation='relu'),
+    Dense(1, activation='linear')
+])
+
+model.compile(optimizer='adam', loss='mse', metrics=['mae'])
+model.summary()
+
+history = model.fit(
+    X_train_scaled,
+    y_train,
+    epochs=100,
+    validation_split=0.05,
+    verbose=1
+)
+
+y_pred = model.predict(X_test)
+
+accuracy(y_test, y_pred), r2, mse, mae, rmse
+
+
+Assignment 2
+
+columns = ['letter'] + [f'feature {i}' for i in range(1, 17)]
+df = pd.read_csv('letter-recognition.data', header=None, names=columns)
+
+input output feature separate
+
+X_scaled = ss.fit_transform(X)
+Y_encoded = le.fit_transform(Y)
+ 
+train_test_split(X_scaled, y_encoded)
+
+model = Sequential([
+    Dense(128, input_shape(X_shape[1],), activation='relu')
+    Dropout(0.5)
+
+    Dense(64, activation='relu')
+    Dropout(0.5)
+
+    Dense(32, activation='relu')
+
+    Dense(26, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='sparse_categorical_crossentropy', metrics=['accuracy'])
+model.summary()
+
+model.fit(X_train, y_train, epochs=30)
+
+y_pred_proba = model.predict(X_test)
+y_pred = np.argmax(y_pred_proba, axis=1)
+
+print accuracy, classification_report
+
+
+Assignment 3
+
+train_df = pd.read_csv('fashion_train')
+test_df = pd.read_csv('fashion_test')
+
+X_train = train_df.drop('label', axis=1)
+X_test = test_df.drop('label', axis=1)
+
+X_train = X_train / 255.0
+X_test = X_test / 255.0
+
+X_train = X_train.values.reshape(-1, 28, 28, 1)
+X_test = X_test.values.reshape(-1, 28, 28, 1)
+
+y_train = 
+y_test =
+
+from tensorflow.keras.utils import to_categorical
+
+y_train_cat = to_categorical(y_train, 10)
+
+from tensorflow.keras.layers import Conv2D, MaxPooling2D, Flatten, Dense, Dropout
+
+model = Sequential([
+    Conv2D(32, (3,3), input_shape=(28, 28, 1), activation='relu'),
+    MaxPooling2D((2,2)),
+    Conv2D(64, (3,3), activation='relu')
+    Flatten(),
+    Dense(128, activation='relu'),
+    Dropout(0.5),
+    Dense(10, activation='softmax')
+])
+
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+
+model.summary()
+
+model.fit(X_train, y_train_cat, epochs=10, batch_size=64, validation_split=0.1)
+
+
+Assignment 4
+
+data = df['Close'].values.reshape(-1, 1)
+
+from sklearn.preprocessing import MinMaxScaler
+
+scaler = MinMaxScaler()
+data_scaled = scaler.fit_transform(data)
+
+train_size = int( len(data_scaled) * 0.8 )
+
+train = data_scaled[:train_size]
+test = data_scaled[train_size:]
+
+# requires consecutive and past data therefore first 4 data will be input and 5th will be output
+def create_dataset(data, step=4):
+    X, y = [], []
+    for i in range(len(data) - step):
+        X.append(data[i:i+step]) # this is slice operator [a, b)
+        y.append(data[i+step])
+    return np.array(X), np.array(y)
+
+X_train, y_train = create_dataset(data_scaled)
+X_test, y_test = create_dataset(data_scaled)
+
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import SimpleRNN, Dropout, Dense
+
+model = Sequential([
+    SimpleRNN(64, return_sequences=True, input_shape=(X_train.shape[1], 1)),
+    Dropout(0.2),
+    SimpleRNN(32),
+    Dropout(0.2),
+    Dense(1)
+])
+
+model.compile(optimizer='adam', loss='mean_squared_error')
+
+history_rnn = model.fit(
+    X_train,
+    y_train,
+    epochs=30
+)
+
+y_pred_rnn = model.predict(X_test)
+y_pred_rnn = scaler.inverse_transform(y_pred_rnn)
+y_test_inv = scaler.inverse_transform(y_test)
+
+plt.plot(y_test_inv, label='Actual')
+plt.plot(y_pred_rnn, label='Predicted')
+plt.xlabel('Time')
+plt.ylabel('Price')
+plt.title('Stock Price Prediction')
+plt.legend()
+plt.show()
